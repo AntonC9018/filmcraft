@@ -4,9 +4,9 @@
 //! file manager (Dolphin, Nautilus) never reach the Project panel or the Timeline. Its X11 backend
 //! does, through Xwayland as well. FilmCraft therefore prefers X11 when `DISPLAY` is set, as
 //! DeckCraft does; `FILMCRAFT_WAYLAND=1` starts on Wayland anyway (sharper with fractional
-//! scaling, but no drag-and-drop from other apps). A local `DISPLAY` whose X server socket is
-//! missing (a stale `ssh -X` leftover, a desktop with Xwayland off) falls back to Wayland rather
-//! than failing with winit's "failed to open display". With no display at all, say so plainly.
+//! scaling, but no drag-and-drop from other apps). A local `DISPLAY` with no X server listening
+//! (a stale `ssh -X` leftover, a desktop with Xwayland off, a socket file left by a stopped server)
+//! falls back to Wayland rather than failing with winit's "failed to open display". With no display at all, say so plainly.
 
 use std::path::Path;
 
@@ -27,9 +27,9 @@ fn local_display_number(display: &str) -> Option<u32> {
     rest.split('.').next()?.parse().ok()
 }
 
-/// Choose from the environment. `socket_exists` checks an X socket path (the filesystem in
-/// [`current`], a stub in tests).
-pub fn choose(display: Option<&str>, wayland: Option<&str>, force_wayland: bool, socket_exists: impl Fn(&Path) -> bool) -> Choice {
+/// Choose from the environment. `listening` says whether an X server accepts connections on a
+/// socket path ([`x_server_listening`] in [`current`], a stub in tests).
+pub fn choose(display: Option<&str>, wayland: Option<&str>, force_wayland: bool, listening: impl Fn(&Path) -> bool) -> Choice {
     let display = display.filter(|d| !d.is_empty());
     let wayland = wayland.is_some_and(|w| !w.is_empty());
     match display {
@@ -37,7 +37,7 @@ pub fn choose(display: Option<&str>, wayland: Option<&str>, force_wayland: bool,
         None => Choice::None,
         Some(_) if force_wayland && wayland => Choice::Default,
         Some(d) => match local_display_number(d) {
-            Some(n) if wayland && !socket_exists(&Path::new("/tmp/.X11-unix").join(format!("X{n}"))) => {
+            Some(n) if wayland && !listening(&Path::new("/tmp/.X11-unix").join(format!("X{n}"))) => {
                 log::warn!("DISPLAY={d} has no X server; starting on Wayland");
                 Choice::Default
             }
@@ -54,8 +54,14 @@ pub fn current() -> &'static Choice {
         let display = std::env::var("DISPLAY").ok();
         let wayland = std::env::var("WAYLAND_DISPLAY").ok();
         let force_wayland = std::env::var_os("FILMCRAFT_WAYLAND").is_some_and(|v| !v.is_empty() && v != "0");
-        choose(display.as_deref(), wayland.as_deref(), force_wayland, |p| p.exists())
+        choose(display.as_deref(), wayland.as_deref(), force_wayland, x_server_listening)
     })
+}
+
+/// Whether an X server accepts a connection on the Unix socket at `path`: a socket file left by a
+/// stopped server refuses it. Connecting and closing at once costs the server nothing.
+fn x_server_listening(path: &Path) -> bool {
+    std::os::unix::net::UnixStream::connect(path).is_ok()
 }
 
 #[cfg(test)]
@@ -83,6 +89,20 @@ mod tests {
         // The socket checked is the display's own.
         assert_eq!(choose(Some(":3"), Some("w"), false, |p: &Path| p.ends_with("X3")), Choice::X11);
         assert_eq!(choose(Some(":3"), Some("w"), false, |p: &Path| p.ends_with("X0")), Choice::Default);
+    }
+
+    #[test]
+    fn a_socket_file_with_no_server_behind_it_is_not_listening() {
+        let dir = std::env::temp_dir().join(format!("filmcraft-display-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("X99");
+        let _ = std::fs::remove_file(&path);
+        assert!(!x_server_listening(&path), "no file");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert!(x_server_listening(&path), "a live listener");
+        drop(listener);
+        assert!(path.exists() && !x_server_listening(&path), "a stale socket file");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
