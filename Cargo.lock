@@ -1704,6 +1704,7 @@ dependencies = [
  "pollster 0.4.0",
  "rfd",
  "serde_json",
+ "subtle",
  "sys-locale",
  "winit",
  "winresource",
