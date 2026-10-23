@@ -836,7 +836,7 @@ fn menu_bar_menus_use_the_13pt_menu_text() {
     let mut d = Driver::demo();
     d.click("menu.File");
     d.frames(3);
-    for id in ["menu.file.open", "menu.file.save", "menu.file.saveAs"] {
+    for id in ["menu.File", "menu.file.open", "menu.file.save", "menu.file.saveAs"] {
         let v = d.ok("ui.elements", json!({"prefix": id}));
         let e = v.as_array().unwrap().iter().find(|e| e["id"] == json!(id)).unwrap_or_else(|| panic!("no menu item {id}")).clone();
         let label = e["label"].as_str().unwrap().to_string();
