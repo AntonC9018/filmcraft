@@ -139,6 +139,6 @@ fn import_captions_button_label_is_legible_in_both_themes() {
             .unwrap_or_else(|| panic!("{theme}: the button label is not drawn"));
         let (hi, lo) = (luminance(color).max(luminance(field_bg)), luminance(color).min(luminance(field_bg)));
         let contrast = (hi + 0.05) / (lo + 0.05);
-        assert!(contrast >= 3.0, "{theme}: label {color:?} on {field_bg:?} has contrast {contrast:.2}:1");
+        assert!(contrast >= 4.5, "{theme}: label {color:?} on {field_bg:?} has contrast {contrast:.2}:1");
     }
 }
