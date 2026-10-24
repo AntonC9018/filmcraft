@@ -79,7 +79,7 @@ if command -v appstreamcli >/dev/null; then
   appstreamcli validate --no-net --explain "$STAGE/usr/share/metainfo/$APP_ID.metainfo.xml"
 fi
 
-has() { case " $FORMATS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+has() { local fmt="$1"; case " $FORMATS " in *" $fmt "*) return 0 ;; *) return 1 ;; esac; }
 
 # ---- .tar.gz ------------------------------------------------------------------------------------
 if has tar; then
@@ -126,6 +126,7 @@ if has appimage; then
   cp "$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png" "$APPDIR/$APP_ID.png"
   ln -s "$APP_ID.png" "$APPDIR/.DirIcon"
 
+  SHA_CHECK_FORMAT='%s  %s\n'
   if [[ -z "$RUNTIME_SHA256" ]]; then
     echo "no pinned AppImage runtime for $ARCH" >&2
     exit 2
@@ -135,10 +136,10 @@ if has appimage; then
     download="$RUNTIME.download"
     curl --proto '=https' -fsSL -o "$download" \
       "https://github.com/AppImage/type2-runtime/releases/download/$RUNTIME_VERSION/runtime-$ARCH"
-    printf '%s  %s\n' "$RUNTIME_SHA256" "$download" | sha256sum -c -
+    printf "$SHA_CHECK_FORMAT" "$RUNTIME_SHA256" "$download" | sha256sum -c -
     mv "$download" "$RUNTIME"
   fi
-  printf '%s  %s\n' "$RUNTIME_SHA256" "$RUNTIME" | sha256sum -c -
+  printf "$SHA_CHECK_FORMAT" "$RUNTIME_SHA256" "$RUNTIME" | sha256sum -c -
 
   TOOL="${APPIMAGETOOL:-$(command -v appimagetool || true)}"
   if [[ -z "$TOOL" ]]; then
@@ -151,11 +152,11 @@ if has appimage; then
       download="$TOOL.download"
       curl --proto '=https' -fsSL -o "$download" \
         "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_VERSION/appimagetool-$ARCH.AppImage"
-      printf '%s  %s\n' "$APPIMAGETOOL_SHA256" "$download" | sha256sum -c -
+      printf "$SHA_CHECK_FORMAT" "$APPIMAGETOOL_SHA256" "$download" | sha256sum -c -
       chmod 755 "$download"
       mv "$download" "$TOOL"
     fi
-    printf '%s  %s\n' "$APPIMAGETOOL_SHA256" "$TOOL" | sha256sum -c -
+    printf "$SHA_CHECK_FORMAT" "$APPIMAGETOOL_SHA256" "$TOOL" | sha256sum -c -
   fi
   # Absolute, because appimagetool runs in $DIST below (CARGO_TARGET_DIR or APPIMAGETOOL may be
   # relative, e.g. target/agent-<name>).
