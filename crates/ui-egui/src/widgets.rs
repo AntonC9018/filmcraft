@@ -44,7 +44,6 @@ fn hot_number_edit(ui: &mut Ui, id: egui::Id, buf: &mut String, value: f64, rang
 /// Returns (response, Some(new value) when changed).
 pub fn hot_number(ui: &mut Ui, id: egui::Id, value: f64, speed: f64, range: (f64, f64), decimals: usize, suffix: &str, t: &Tokens) -> (Response, Option<f64>) {
     let editing_id = id.with("editing");
-    let edit_id = id.with("edit");
     let select_all_id = id.with("select-all");
     let editing: Option<String> = ui.data(|d| d.get_temp(editing_id));
     if let Some(mut buf) = editing {
