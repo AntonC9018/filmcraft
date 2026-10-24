@@ -8,14 +8,15 @@ use crate::theme::Tokens;
 
 fn hot_number_edit(
     ui: &mut Ui,
-    editing_id: egui::Id,
-    edit_id: egui::Id,
-    select_all_id: egui::Id,
+    id: egui::Id,
     buf: &mut String,
     value: f64,
     range: (f64, f64),
     suffix: &str,
 ) -> (Response, Option<f64>) {
+    let editing_id = id.with("editing");
+    let edit_id = id.with("edit");
+    let select_all_id = id.with("select-all");
     let r = ui.add(egui::TextEdit::singleline(buf).id(edit_id).desired_width(56.0).font(Tokens::ui(12.0)));
     let mut out = None;
     if r.lost_focus() {
@@ -54,7 +55,7 @@ pub fn hot_number(ui: &mut Ui, id: egui::Id, value: f64, speed: f64, range: (f64
     let select_all_id = id.with("select-all");
     let editing: Option<String> = ui.data(|d| d.get_temp(editing_id));
     if let Some(mut buf) = editing {
-        return hot_number_edit(ui, editing_id, edit_id, select_all_id, &mut buf, value, range, suffix);
+        return hot_number_edit(ui, id, &mut buf, value, range, suffix);
     }
     let text = format!("{value:.decimals$}{suffix}");
     let galley = ui.painter().layout_no_wrap(text, Tokens::ui(12.0), t.hot_text);
