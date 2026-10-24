@@ -6,14 +6,7 @@ use filmcraft_time::{FrameRate, Tick, parse_timecode};
 use crate::icons::{self, Icon};
 use crate::theme::Tokens;
 
-fn hot_number_edit(
-    ui: &mut Ui,
-    id: egui::Id,
-    buf: &mut String,
-    value: f64,
-    range: (f64, f64),
-    suffix: &str,
-) -> (Response, Option<f64>) {
+fn hot_number_edit(ui: &mut Ui, id: egui::Id, buf: &mut String, value: f64, range: (f64, f64), suffix: &str) -> (Response, Option<f64>) {
     let editing_id = id.with("editing");
     let edit_id = id.with("edit");
     let select_all_id = id.with("select-all");
