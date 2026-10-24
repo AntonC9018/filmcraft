@@ -52,7 +52,7 @@ pub fn hot_number(ui: &mut Ui, id: egui::Id, value: f64, speed: f64, range: (f64
     let editing_id = id.with("editing");
     let edit_id = id.with("edit");
     let select_all_id = id.with("select-all");
-    let mut editing: Option<String> = ui.data(|d| d.get_temp(editing_id));
+    let editing: Option<String> = ui.data(|d| d.get_temp(editing_id));
     if let Some(mut buf) = editing {
         return hot_number_edit(ui, editing_id, edit_id, select_all_id, &mut buf, value, range, suffix);
     }

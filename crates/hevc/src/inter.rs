@@ -122,7 +122,7 @@ fn filt<'a, P: Px + 'a, const T: usize>(tap: impl Fn(usize) -> Option<&'a [P]> +
         64 => filt_w::<P, T, 64>(tap, f, shift, out),
         _ => {
             for (j, o) in out.iter_mut().take(w).enumerate() {
-                let s: i32 = (0..T).map(|k| f[k] as i32 * tap(k).and_then(|s| s.get(j)).map_or(0, P::w32)).sum();
+                let s: i32 = (0..T).map(|k| f[k] as i32 * tap(k).and_then(|s| s.get(j)).map_or(0, |p| p.w32())).sum();
                 *o = (s >> shift) as i16;
             }
         }
