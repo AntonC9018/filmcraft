@@ -271,6 +271,10 @@ fn spread_words(text: &str, from: usize, to: usize, out: &mut Vec<Word>) {
         at = end;
         out.push(Word::new(w, sample_tick(start as i64), sample_tick(end as i64)));
     }
+    // rounding can leave the last word just short of the range end
+    if let Some(last) = out.last_mut() {
+        last.end = sample_tick(to as i64);
+    }
 }
 
 #[cfg(test)]
@@ -285,7 +289,7 @@ mod tests {
         assert_eq!(server_language(Some("auto")), "auto");
         assert_eq!(server_language(None), "auto");
         assert_eq!(server_language(Some("r")), "auto");
-        assert_eq!(server_language(Some("russian-language")), "auto");
+        assert_eq!(server_language(Some("russian-language-is-long")), "auto");
     }
 
     #[test]
