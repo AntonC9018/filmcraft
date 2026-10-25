@@ -11,12 +11,16 @@
 //! - [`diarize`]: speaker labelling by clustering per-chunk MFCC statistics (classical, no model).
 //! - [`mel`]: the log-mel front end shared by Whisper and diarization.
 //! - [`vad`]: energy-based tightening of word bounds (keeps pauses out of words).
+//! - [`handy`] (feature `handy`): speech-to-text through a Handy local transcription server over
+//!   loopback HTTP, for setups that keep their models in Handy instead of this catalogue.
 //!
 //! See `docs/transcripts.md` for the user-facing behaviour and accuracy numbers.
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
 
 pub mod diarize;
+#[cfg(feature = "handy")]
+pub mod handy;
 pub mod mel;
 pub mod models;
 pub mod vad;
