@@ -119,10 +119,17 @@ impl Transcriber for HandyTranscriber {
             if reply.segments.is_empty() {
                 spread_words(&reply.text, r.start, r.end, &mut words);
             } else {
+                let before = words.len();
                 for s in &reply.segments {
+                    // clamp the span into the chunk; engines without real times report
+                    // zero spans, which spread_words skips
                     let a = r.start as f64 + s.start.max(0.0) * SAMPLE_RATE as f64;
-                    let b = r.start as f64 + s.end.max(s.start) * SAMPLE_RATE as f64;
+                    let b = (r.start as f64 + s.end * SAMPLE_RATE as f64).clamp(a, r.end as f64);
                     spread_words(&s.text, a as usize, b as usize, &mut words);
+                }
+                // every segment was degenerate: fall back to the whole chunk
+                if words.len() == before && !reply.text.is_empty() {
+                    spread_words(&reply.text, r.start, r.end, &mut words);
                 }
             }
         }
@@ -320,6 +327,21 @@ mod tests {
         .unwrap();
         assert_eq!(timed.segments.len(), 2);
         assert_eq!(timed.segments[1].text, "два");
+        // engines without times report a single zero-span row
+        let untimed: Reply =
+            serde_json::from_str(r#"{"text":"hello","segments":[{"start":0.0,"end":0.0,"text":"hello"}]}"#).unwrap();
+        assert_eq!(untimed.segments.len(), 1);
+    }
+
+    #[test]
+    fn zero_span_words_fall_back_to_the_whole_chunk() {
+        let mut words = Vec::new();
+        spread_words("", 0, 100, &mut words);
+        spread_words("hi", 50, 50, &mut words);
+        assert!(words.is_empty());
+        spread_words("a b", 0, 16_000, &mut words);
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[1].end, seconds_tick(1.0));
     }
 
     #[test]
