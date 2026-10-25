@@ -163,8 +163,11 @@ impl HandyTranscriber {
         progress: ProgressFn,
         done: f32,
     ) -> Result<Reply, SpeechError> {
+        // The server rejects any sample outside ±1 (and non-finite ones) for the whole
+        // request, so decoded media that clips or glitches must not pass through raw.
         let mut body = Vec::with_capacity(chunk.len() * 4);
         for s in chunk {
+            let s = if s.is_finite() { s.clamp(-1.0, 1.0) } else { 0.0 };
             body.extend_from_slice(&s.to_le_bytes());
         }
         let language = server_language(opts.language.as_deref());
