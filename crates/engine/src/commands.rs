@@ -584,20 +584,28 @@ pub fn linked_roll_pairs(seq: &filmcraft_project::Sequence, left: ClipId, right:
 }
 
 /// Expand a clip selection with linked partners (when linked selection is on).
-pub fn with_links(s: &Session, clips: &[ClipId]) -> Vec<ClipId> {
-    let Some(seq) = s.active_sequence() else { return clips.to_vec() };
+/// Clips sharing a link id with `clips` — the link group — regardless of the Linked Selection
+/// setting, for the structural commands (unlink) that act on the actual relation.
+pub fn link_group(seq: &filmcraft_project::Sequence, clips: &[ClipId]) -> Vec<ClipId> {
+    let links: Vec<u64> = clips.iter().filter_map(|c| seq.find_item(*c).and_then(|(_, i)| i.link)).collect();
     let mut out = clips.to_vec();
-    if s.state.linked_selection {
-        let links: Vec<u64> = clips.iter().filter_map(|c| seq.find_item(*c).and_then(|(_, i)| i.link)).collect();
-        for t in seq.all_tracks() {
-            for i in &t.items {
-                if i.link.is_some_and(|l| links.contains(&l)) && !out.contains(&i.id) {
-                    out.push(i.id);
-                }
+    for t in seq.all_tracks() {
+        for i in &t.items {
+            if i.link.is_some_and(|l| links.contains(&l)) && !out.contains(&i.id) {
+                out.push(i.id);
             }
         }
     }
     out
+}
+
+pub fn with_links(s: &Session, clips: &[ClipId]) -> Vec<ClipId> {
+    let Some(seq) = s.active_sequence() else { return clips.to_vec() };
+    if s.state.linked_selection {
+        link_group(seq, clips)
+    } else {
+        clips.to_vec()
+    }
 }
 
 /// The delta a trim of `clips` (a clip and its linked partners) can apply together: `delta`
@@ -1931,9 +1939,12 @@ fn build() -> Vec<CommandSpec> {
         cmd!("clip.link", "Link", ["Clip"], Some("Cmd+L"), r#"{"clips":[id]?}"#, has_selection, |s, p| {
             let sel = clips_p(s, p);
             let linked = sel.iter().all(|c| s.active_sequence().and_then(|q| q.find_item(*c)).is_some_and(|(_, i)| i.link.is_some()));
+            // Unlink breaks the whole link group, so partners keep no dangling id no matter
+            // which side of a pair the selection landed on (Premiere's Cmd+L behaviour).
+            let group = s.active_sequence().map(|q| link_group(q, &sel)).unwrap_or_else(|| sel.clone());
             s.edit_sequence(if linked { "Unlink" } else { "Link" }, |q, ctx, _| {
                 if linked {
-                    for c in &sel {
+                    for c in &group {
                         if let Some((_, i)) = q.find_item_mut(*c) {
                             i.link = None;
                         }

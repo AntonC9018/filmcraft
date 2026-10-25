@@ -219,6 +219,26 @@ impl Services for FsServices {
     }
 }
 
+/// Clips whose `link` differs between two project snapshots — the groups an undone Unlink
+/// relinked, used to reselect them.
+fn clips_with_changed_links(restored: &Project, unlinked: &Project) -> Vec<ClipId> {
+    let mut out = Vec::new();
+    for item in restored.sequences() {
+        let Some(seq) = restored.sequence(item.id) else { continue };
+        let Some(old) = unlinked.sequence(item.id) else { continue };
+        for t in seq.all_tracks() {
+            for i in &t.items {
+                if let Some((_, o)) = old.find_item(i.id)
+                    && o.link != i.link
+                {
+                    out.push(i.id);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// A point in the undo history (its top step), from [`Session::undo_mark`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UndoMark(Option<usize>);
@@ -1035,6 +1055,15 @@ impl Session {
         let (label, prev) = self.history.undo.pop()?;
         self.history.merge_key = None;
         let cur = std::mem::replace(&mut self.project, prev);
+        // Undoing an Unlink relinks whole groups; show what came back by selecting it,
+        // instead of leaving a partial selection from before the unlink.
+        if label == "Unlink" {
+            let relinked = clips_with_changed_links(&self.project, &cur);
+            if !relinked.is_empty() {
+                self.state.selection = relinked;
+                self.state.caption_selection.clear();
+            }
+        }
         self.history.redo.push((label.clone(), cur));
         self.fix_state();
         self.bump();

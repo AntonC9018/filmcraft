@@ -161,6 +161,9 @@ fn link_and_speed_take_explicit_clips_without_a_selection() {
     assert_eq!(clip(&s, last.id).unwrap().duration, last.duration);
     s.execute("edit.redo", json!({})).unwrap();
     assert_eq!(clip(&s, last.id).unwrap().duration, fast.duration);
+    // the undone Unlink above reselected the relinked pair; menu enablement follows
+    // whatever the selection is after an explicit deselect
+    s.execute("edit.deselectAll", json!({})).unwrap();
     assert!(s.state.selection.is_empty() && !s.is_enabled("clip.speedDuration"), "menu enablement still follows the selection");
 }
 
@@ -306,4 +309,24 @@ fn link_leaves_clips_without_a_partner_unlinked() {
     assert_eq!(clip(&s, v0).unwrap().link, clip(&s, a0).unwrap().link);
     assert_eq!(clip(&s, v1).unwrap().link, None, "v1 has no overlapping audio in the selection");
     assert_eq!(clip(&s, a2).unwrap().link, None, "a2 has no overlapping video in the selection");
+}
+
+#[test]
+fn unlink_breaks_the_whole_group_and_undo_reselects_it() {
+    let mut s = demo();
+    let (v, au) = (v1(&s)[0].clone(), a1(&s)[0].clone());
+    assert!(v.link.is_some());
+    assert_eq!(v.link, au.link);
+    // one side of the pair selected, as a click with Linked Selection off leaves it
+    s.execute("timeline.select", json!({"clips": [v.id.0], "linked": false})).unwrap();
+    s.execute("clip.link", json!({})).unwrap();
+    assert_eq!(clip(&s, v.id).unwrap().link, None, "the selected side is unlinked");
+    assert_eq!(clip(&s, au.id).unwrap().link, None, "the partner goes with it");
+    // undo relinks the group and selects what came back
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(clip(&s, v.id).unwrap().link, v.link);
+    assert_eq!(clip(&s, au.id).unwrap().link, au.link);
+    assert_eq!(s.state.selection.len(), 2);
+    assert!(s.state.selection.contains(&v.id));
+    assert!(s.state.selection.contains(&au.id));
 }
