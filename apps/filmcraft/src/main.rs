@@ -208,6 +208,14 @@ fn app_creator(launch: Launch, graphics: graphics::GraphicsStart, created: Arc<A
             }),
         );
         let mut session = Session::default();
+        // Text panel ▸ Transcribe goes through the local Handy dictation server when the
+        // FILMCRAFT_HANDY_* environment names one (feature `handy`).
+        #[cfg(feature = "handy")]
+        match filmcraft_engine::transcript::handy_from_env() {
+            Ok(Some(t)) => session.transcriber = Some(t),
+            Ok(None) => {}
+            Err(e) => log::warn!("Handy speech-to-text unavailable: {e}"),
+        }
         if let Some(dir) = data_dir.clone().or_else(default_data_dir) {
             let mut cfg = AutosaveConfig::new(dir);
             cfg.local_offset = local_offset;

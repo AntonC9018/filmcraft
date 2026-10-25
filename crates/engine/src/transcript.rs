@@ -39,6 +39,15 @@ pub fn speech_available() -> bool {
     filmcraft_speech::available()
 }
 
+/// The Handy local-server transcriber configured through the `FILMCRAFT_HANDY_*` environment
+/// (feature `handy`; see `filmcraft_speech::handy`): `Ok(None)` when unconfigured, `Err` when
+/// configured wrongly. Hosts install the result into [`Session::transcriber`].
+#[cfg(feature = "handy")]
+pub fn handy_from_env() -> std::result::Result<Option<Arc<dyn Transcriber>>, String> {
+    Ok(filmcraft_speech::handy::Config::from_env()?
+        .map(|c| Arc::new(filmcraft_speech::handy::HandyTranscriber::new(&c)) as Arc<dyn Transcriber>))
+}
+
 /// The words of the active sequence's transcript.
 pub fn sequence_words(s: &Session) -> Vec<SeqWord> {
     match s.active_sequence() {
