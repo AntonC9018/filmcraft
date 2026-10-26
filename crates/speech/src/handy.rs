@@ -208,6 +208,8 @@ fn server_language(language: Option<&str>) -> &str {
 
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
+        // Handle protocol statuses ourselves, including the server's busy reply.
+        .http_status_as_error(false)
         // Connecting to a down server should fail fast; transcription itself can run minutes.
         .timeout_connect(Some(Duration::from_secs(5)))
         .build()
@@ -332,6 +334,42 @@ mod tests {
             assert_eq!(transcript.words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(), ["fallback", "words"]);
             assert!(transcript.words.iter().all(|w| w.start >= sample_tick(0) && w.end <= sample_tick(16_000) && w.end >= w.start));
         }
+    }
+
+    #[test]
+    fn busy_replies_retry_and_resend_sanitized_audio() {
+        let (client, worker) = server(vec![(409, r#"{"error":"speech_busy"}"#.into()), (200, r#"{"text":"ready"}"#.into())]);
+        let mut waiting = 0;
+        let reply = client
+            .post(
+                &agent(),
+                &[2.0, -2.0, f32::NAN],
+                &Options::default(),
+                &mut |_, message| {
+                    if message.contains("busy") {
+                        waiting += 1;
+                    }
+                    true
+                },
+                0.0,
+            )
+            .unwrap();
+        assert_eq!(reply.text, "ready");
+        assert_eq!(waiting, 1);
+        let bodies = worker.join().unwrap();
+        let expected: Vec<u8> = [1.0_f32, -1.0, 0.0].into_iter().flat_map(f32::to_le_bytes).collect();
+        assert_eq!(bodies, [expected.clone(), expected]);
+    }
+
+    #[test]
+    fn busy_wait_can_be_cancelled_and_auth_errors_are_actionable() {
+        let (client, worker) = server(vec![(409, "{}".into())]);
+        assert_eq!(client.post(&agent(), &[0.0], &Options::default(), &mut |_, _| false, 0.0).unwrap_err(), SpeechError::Cancelled);
+        worker.join().unwrap();
+        let (client, worker) = server(vec![(401, "{}".into())]);
+        let err = client.post(&agent(), &[0.0], &Options::default(), &mut |_, _| true, 0.0).unwrap_err();
+        assert!(matches!(err, SpeechError::Model(message) if message.contains("bearer token")));
+        worker.join().unwrap();
     }
 
     #[test]
