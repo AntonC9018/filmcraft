@@ -55,13 +55,23 @@ impl Config {
             return Err("FILMCRAFT_HANDY_TOKEN is empty".into());
         }
         let url = std::env::var("FILMCRAFT_HANDY_URL").unwrap_or_else(|_| "http://127.0.0.1:8003".into());
-        let url = url.trim().trim_end_matches('/').to_string();
-        if !url.starts_with("http://127.0.0.1:") {
-            return Err(format!("FILMCRAFT_HANDY_URL must name the loopback server (http://127.0.0.1:<port>), got {url}"));
-        }
+        let url = loopback_url(&url)?;
         let model = std::env::var("FILMCRAFT_HANDY_MODEL").ok().filter(|m| !m.trim().is_empty());
         Ok(Some(Config { url, token, model: model.map(|m| m.trim().to_string()) }))
     }
+}
+
+/// Accept only the server's literal IPv4 authority, with no user-info, path,
+/// query or fragment. A prefix check also accepts `127.0.0.1:8003@remote-host`.
+fn loopback_url(url: &str) -> Result<String, String> {
+    let url = url.trim().trim_end_matches('/');
+    let valid = url
+        .strip_prefix("http://127.0.0.1:")
+        .is_some_and(|port| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok_and(|p| p > 0));
+    if !valid {
+        return Err("FILMCRAFT_HANDY_URL must be http://127.0.0.1:<port> with no other URL components".into());
+    }
+    Ok(url.to_string())
 }
 
 /// A [`Transcriber`] that sends audio to a Handy local server and maps the reply to a
@@ -153,6 +163,9 @@ impl Transcriber for HandyTranscriber {
 impl HandyTranscriber {
     /// One chunk to `POST /transcribe`, waiting out `speech_busy` replies.
     fn post(&self, agent: &ureq::Agent, chunk: &[f32], opts: &Options, progress: ProgressFn, done: f32) -> Result<Reply, SpeechError> {
+        // Config is public, so validate here too, before any credentials or audio
+        // can leave the process (not only when loading environment settings).
+        let url = loopback_url(&self.url).map_err(SpeechError::Model)?;
         // The server rejects any sample outside ±1 (and non-finite ones) for the whole
         // request, so decoded media that clips or glitches must not pass through raw.
         let mut body = Vec::with_capacity(chunk.len() * 4);
@@ -164,7 +177,7 @@ impl HandyTranscriber {
         let deadline = Instant::now() + BUSY_TIMEOUT;
         loop {
             let attempt = agent
-                .post(format!("{}/transcribe", self.url))
+                .post(format!("{url}/transcribe"))
                 .header("Authorization", format!("Bearer {}", self.token))
                 .header("Content-Type", "application/octet-stream")
                 .header("X-Speech-Language", language)
@@ -210,6 +223,9 @@ fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         // Handle protocol statuses ourselves, including the server's busy reply.
         .http_status_as_error(false)
+        // Audio and credentials belong only on the configured loopback socket.
+        .proxy(None)
+        .max_redirects(0)
         // Connecting to a down server should fail fast; transcription itself can run minutes.
         .timeout_connect(Some(Duration::from_secs(5)))
         .build()
@@ -220,7 +236,7 @@ fn agent() -> ureq::Agent {
 /// window in the half minute before the limit, so a running word is not cut in two.
 fn chunk_bounds(audio: &[f32]) -> Vec<std::ops::Range<usize>> {
     if audio.len() <= MAX_CHUNK {
-        return vec![0..audio.len()];
+        return std::iter::once(0..audio.len()).collect();
     }
     let frame = (SAMPLE_RATE / 100) as usize; // matches vad's 10 ms frames
     let db = crate::vad::frame_db(audio);
@@ -370,6 +386,27 @@ mod tests {
         let err = client.post(&agent(), &[0.0], &Options::default(), &mut |_, _| true, 0.0).unwrap_err();
         assert!(matches!(err, SpeechError::Model(message) if message.contains("bearer token")));
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn endpoint_is_strictly_loopback_and_never_uses_proxies_or_redirects() {
+        assert_eq!(loopback_url(" http://127.0.0.1:8003/ ").unwrap(), "http://127.0.0.1:8003");
+        for url in [
+            "http://127.0.0.1:8003@remote.invalid",
+            "http://127.0.0.1:8003/path",
+            "http://127.0.0.1:8003?query",
+            "http://127.0.0.1:8003#fragment",
+            "http://127.0.0.1:0",
+            "http://127.0.0.1:65536",
+            "http://127.0.0.1:",
+            "https://127.0.0.1:8003",
+        ] {
+            assert!(loopback_url(url).is_err(), "{url}");
+            let client = HandyTranscriber::new(&Config { url: url.into(), token: "synthetic-token".into(), model: None });
+            assert!(matches!(client.post(&agent(), &[0.0], &Options::default(), &mut |_, _| true, 0.0), Err(SpeechError::Model(_))));
+        }
+        assert!(agent().config().proxy().is_none());
+        assert_eq!(agent().config().max_redirects(), 0);
     }
 
     #[test]
