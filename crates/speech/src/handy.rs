@@ -47,10 +47,7 @@ impl Config {
         let token = match std::env::var("FILMCRAFT_HANDY_TOKEN") {
             Ok(t) if !t.trim().is_empty() => t.trim().to_string(),
             _ => match std::env::var("FILMCRAFT_HANDY_TOKEN_FILE") {
-                Ok(f) if !f.trim().is_empty() => std::fs::read_to_string(f.trim())
-                    .map_err(|e| format!("FILMCRAFT_HANDY_TOKEN_FILE: {e}"))?
-                    .trim()
-                    .to_string(),
+                Ok(f) if !f.trim().is_empty() => std::fs::read_to_string(f.trim()).map_err(|e| format!("FILMCRAFT_HANDY_TOKEN_FILE: {e}"))?.trim().to_string(),
                 _ => return Ok(None),
             },
         };
@@ -121,11 +118,16 @@ impl Transcriber for HandyTranscriber {
             } else {
                 let before = words.len();
                 for s in &reply.segments {
-                    // clamp the span into the chunk; engines without real times report
-                    // zero spans, which spread_words skips
-                    let a = r.start as f64 + s.start.max(0.0) * SAMPLE_RATE as f64;
-                    let b = (r.start as f64 + s.end * SAMPLE_RATE as f64).clamp(a, r.end as f64);
-                    spread_words(&s.text, a as usize, b as usize, &mut words);
+                    // Treat server timings as untrusted. Clamp each endpoint separately
+                    // before adding the chunk offset; a start beyond the chunk must not
+                    // become the lower bound of a clamp whose upper bound is smaller.
+                    if !s.start.is_finite() || !s.end.is_finite() {
+                        continue;
+                    }
+                    let len = r.len() as f64;
+                    let a = (s.start * SAMPLE_RATE as f64).clamp(0.0, len) as usize;
+                    let b = (s.end * SAMPLE_RATE as f64).clamp(0.0, len) as usize;
+                    spread_words(&s.text, r.start + a, r.start + b, &mut words);
                 }
                 // every segment was degenerate: fall back to the whole chunk
                 if words.len() == before && !reply.text.is_empty() {
@@ -133,12 +135,7 @@ impl Transcriber for HandyTranscriber {
                 }
             }
         }
-        let mut t = Transcript {
-            language: opts.language.clone().unwrap_or_default(),
-            source: self.id.clone(),
-            speakers: Vec::new(),
-            words,
-        };
+        let mut t = Transcript { language: opts.language.clone().unwrap_or_default(), source: self.id.clone(), speakers: Vec::new(), words };
         t.normalize();
         crate::vad::tighten_words(audio, &mut t.words);
         if opts.diarize && !t.words.is_empty() {
@@ -155,14 +152,7 @@ impl Transcriber for HandyTranscriber {
 
 impl HandyTranscriber {
     /// One chunk to `POST /transcribe`, waiting out `speech_busy` replies.
-    fn post(
-        &self,
-        agent: &ureq::Agent,
-        chunk: &[f32],
-        opts: &Options,
-        progress: ProgressFn,
-        done: f32,
-    ) -> Result<Reply, SpeechError> {
+    fn post(&self, agent: &ureq::Agent, chunk: &[f32], opts: &Options, progress: ProgressFn, done: f32) -> Result<Reply, SpeechError> {
         // The server rejects any sample outside ±1 (and non-finite ones) for the whole
         // request, so decoded media that clips or glitches must not pass through raw.
         let mut body = Vec::with_capacity(chunk.len() * 4);
@@ -183,8 +173,7 @@ impl HandyTranscriber {
             match response.status().as_u16() {
                 200 => {
                     let text = response.into_body().read_to_string().map_err(|e| SpeechError::Model(e.to_string()))?;
-                    return serde_json::from_str::<Reply>(&text)
-                        .map_err(|e| SpeechError::Model(format!("Handy reply is not valid JSON: {e}")));
+                    return serde_json::from_str::<Reply>(&text).map_err(|e| SpeechError::Model(format!("Handy reply is not valid JSON: {e}")));
                 }
                 409 if Instant::now() < deadline => {
                     if !progress(done, "Waiting for the Handy server (busy)") {
@@ -193,9 +182,7 @@ impl HandyTranscriber {
                     std::thread::sleep(BUSY_RETRY);
                 }
                 401 => {
-                    return Err(SpeechError::Model(
-                        "Handy rejected the bearer token (check FILMCRAFT_HANDY_TOKEN)".into(),
-                    ));
+                    return Err(SpeechError::Model("Handy rejected the bearer token (check FILMCRAFT_HANDY_TOKEN)".into()));
                 }
                 status => {
                     let detail = response.into_body().read_to_string().map(|s| s.chars().take(200).collect::<String>()).unwrap_or_default();
@@ -214,11 +201,7 @@ fn unavailable(url: &str, e: &ureq::Error) -> SpeechError {
 /// back to auto-detection instead of failing the request.
 fn server_language(language: Option<&str>) -> &str {
     match language {
-        Some(l)
-            if (2..=16).contains(&l.len()) && l.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-') =>
-        {
-            l
-        }
+        Some(l) if (2..=16).contains(&l.len()) && l.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-') => l,
         _ => "auto",
     }
 }
@@ -292,6 +275,65 @@ mod tests {
     use super::*;
     use crate::seconds_tick;
 
+    /// A real HTTP seam using synthetic credentials and audio, never the live server.
+    fn server(replies: Vec<(u16, String)>) -> (HandyTranscriber, std::thread::JoinHandle<Vec<Vec<u8>>>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for (status, body) in replies {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut reader = BufReader::new(&mut stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert_eq!(line.trim(), "POST /transcribe HTTP/1.1");
+                let mut length = 0;
+                let mut authorized = false;
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some((key, value)) = line.split_once(':') {
+                        if key.eq_ignore_ascii_case("content-length") {
+                            length = value.trim().parse().unwrap();
+                        }
+                        if key.eq_ignore_ascii_case("authorization") {
+                            authorized = value.trim() == "Bearer synthetic-token";
+                        }
+                    }
+                }
+                assert!(authorized);
+                let mut audio = vec![0; length];
+                reader.read_exact(&mut audio).unwrap();
+                bodies.push(audio);
+                write!(stream, "HTTP/1.1 {status} Reply\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+            bodies
+        });
+        (HandyTranscriber::new(&Config { url, token: "synthetic-token".into(), model: None }), worker)
+    }
+
+    #[test]
+    fn hostile_segment_bounds_stay_inside_the_audio_and_fall_back() {
+        for segments in [
+            r#"[{"start":2.0,"end":3.0,"text":"outside"}]"#,
+            r#"[{"start":0.9,"end":0.1,"text":"reversed"}]"#,
+            r#"[{"start":0.0,"end":0.0,"text":"untimed"}]"#,
+            r#"[{"start":-2.0,"end":20.0,"text":"fallback words"}]"#,
+        ] {
+            let body = format!(r#"{{"text":"fallback words","segments":{segments}}}"#);
+            let (client, worker) = server(vec![(200, body)]);
+            let transcript = client.transcribe(&vec![0.1; 16_000], &Options { diarize: false, ..Default::default() }, &mut |_, _| true).unwrap();
+            worker.join().unwrap();
+            assert_eq!(transcript.words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(), ["fallback", "words"]);
+            assert!(transcript.words.iter().all(|w| w.start >= sample_tick(0) && w.end <= sample_tick(16_000) && w.end >= w.start));
+        }
+    }
+
     #[test]
     fn language_is_validated_for_the_server() {
         assert_eq!(server_language(Some("ru")), "ru");
@@ -324,15 +366,12 @@ mod tests {
         let plain: Reply = serde_json::from_str(r#"{"text":"привет"}"#).unwrap();
         assert_eq!(plain.text, "привет");
         assert!(plain.segments.is_empty());
-        let timed: Reply = serde_json::from_str(
-            r#"{"text":"раз два","segments":[{"start":0.0,"end":1.5,"text":"раз"}, {"start":1.5,"end":2.0,"text":"два"}]}"#,
-        )
-        .unwrap();
+        let timed: Reply =
+            serde_json::from_str(r#"{"text":"раз два","segments":[{"start":0.0,"end":1.5,"text":"раз"}, {"start":1.5,"end":2.0,"text":"два"}]}"#).unwrap();
         assert_eq!(timed.segments.len(), 2);
         assert_eq!(timed.segments[1].text, "два");
         // engines without times report a single zero-span row
-        let untimed: Reply =
-            serde_json::from_str(r#"{"text":"hello","segments":[{"start":0.0,"end":0.0,"text":"hello"}]}"#).unwrap();
+        let untimed: Reply = serde_json::from_str(r#"{"text":"hello","segments":[{"start":0.0,"end":0.0,"text":"hello"}]}"#).unwrap();
         assert_eq!(untimed.segments.len(), 1);
     }
 

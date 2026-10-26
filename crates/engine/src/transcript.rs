@@ -44,8 +44,7 @@ pub fn speech_available() -> bool {
 /// configured wrongly. Hosts install the result into [`Session::transcriber`].
 #[cfg(feature = "handy")]
 pub fn handy_from_env() -> std::result::Result<Option<Arc<dyn Transcriber>>, String> {
-    Ok(filmcraft_speech::handy::Config::from_env()?
-        .map(|c| Arc::new(filmcraft_speech::handy::HandyTranscriber::new(&c)) as Arc<dyn Transcriber>))
+    Ok(filmcraft_speech::handy::Config::from_env()?.map(|c| Arc::new(filmcraft_speech::handy::HandyTranscriber::new(&c)) as Arc<dyn Transcriber>))
 }
 
 /// The words of the active sequence's transcript.

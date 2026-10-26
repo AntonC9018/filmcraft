@@ -601,11 +601,7 @@ pub fn link_group(seq: &filmcraft_project::Sequence, clips: &[ClipId]) -> Vec<Cl
 
 pub fn with_links(s: &Session, clips: &[ClipId]) -> Vec<ClipId> {
     let Some(seq) = s.active_sequence() else { return clips.to_vec() };
-    if s.state.linked_selection {
-        link_group(seq, clips)
-    } else {
-        clips.to_vec()
-    }
+    if s.state.linked_selection { link_group(seq, clips) } else { clips.to_vec() }
 }
 
 /// The delta a trim of `clips` (a clip and its linked partners) can apply together: `delta`
